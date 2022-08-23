@@ -12,12 +12,17 @@ type DrawControlProps = ConstructorParameters<typeof MapboxDraw>[0] & {
   onDelete?: (evt: { features: Feature[] }) => void;
   onSelectionChange?: (evt: { features: Feature[] }) => void;
   onLiveUpdate?: (evt: { features: Feature[] }) => void;
+  onLoad?: (mapboxDraw: MapboxDraw) => void;
 };
 
 export default function DrawControl(props: DrawControlProps) {
   useControl<MapboxDraw>(
     () => {
-      return new MapboxDraw(props);
+      const result = new MapboxDraw(props);
+      if (props.onLoad != null) {
+        props.onLoad(result);
+      }
+      return result;
     },
     ({ map }: { map: MapRef }) => {
       //See https://github.com/mapbox/mapbox-gl-draw/blob/main/docs/API.md#events

@@ -1,16 +1,16 @@
-import React, { Fragment, useCallback, useState } from "react";
+import React, {useCallback, useRef, useState} from "react";
 import "./App.css";
+import {MapboxLayer} from '@deck.gl/mapbox';
+import {BitmapLayer} from '@deck.gl/layers';
 import Map, {
   FullscreenControl,
-  Layer,
   NavigationControl,
-  Source,
 } from "react-map-gl";
 import "mapbox-gl/dist/mapbox-gl.css";
 import GeocoderControl from "./geocoder-control";
 import "@mapbox/mapbox-gl-draw/dist/mapbox-gl-draw.css";
 import DrawControl from "./draw-control";
-import { Feature, FeatureCollection, Polygon } from "geojson";
+import {Feature, FeatureCollection, Polygon} from "geojson";
 import Objectproperties from "./objectproperties";
 import { FeatureProperties } from "./feature-properties";
 import MapboxDraw from "@mapbox/mapbox-gl-draw";
@@ -19,29 +19,35 @@ import SimpleSelectMode from "./CustomSimpleSelectMode";
 import throttle from "lodash.throttle";
 import { FontAwesomeIcon } from "@fortawesome/react-fontawesome";
 import {
-  faFloppyDisk,
+  faFloppyDisk, faFolderOpen, faMap,
   faQuestionCircle,
 } from "@fortawesome/free-solid-svg-icons";
 import HelpComponent from "./HelpComponent";
+import { Position } from "@deck.gl/core/utils/positions";
+import mapboxgl from "mapbox-gl";
 
 const mapboxAccessToken =
   "pk.eyJ1IjoiZ2Vvcmdpb3MtdWJlciIsImEiOiJjanZidTZzczAwajMxNGVwOGZrd2E5NG90In0.gdsRu_UeU_uPi9IulBruXA";
 
-function extractCoordinates(feature: Feature): number[][] | null {
+function extractCoordinates(feature: Feature): [Position, Position, Position, Position] | null {
   const polygonFeature = feature as Feature<Polygon>;
 
-  if (polygonFeature.geometry == null) {
+  if (polygonFeature.geometry == null || polygonFeature.geometry.coordinates.length !== 1 || polygonFeature.geometry.coordinates[0].length !== 5) {
     return null;
   }
-  if (polygonFeature.geometry.coordinates.length !== 1) {
-    return null;
-  }
-  if (polygonFeature.geometry.coordinates[0].length !== 5) {
-    //In GeoJSON, the start and end coordinate are the same
-    return null;
-  }
-  return polygonFeature.geometry.coordinates[0].slice(0, 4);
+  const c =  polygonFeature.geometry.coordinates[0];
+  return [[c[0][0], c[0][1]],
+    [c[1][0], c[1][1]],
+    [c[2][0], c[2][1]],
+    [c[3][0], c[3][1]]];
 }
+
+const MAPBOX_STYLES = [
+  "mapbox://styles/mapbox/satellite-streets-v11",
+    "mapbox://styles/mapbox/light-v10",
+    "mapbox://styles/mapbox/dark-v10",
+    "mapbox://styles/mapbox/streets-v11"
+]
 
 function App() {
   const [viewState, setViewState] = useState({
@@ -49,12 +55,70 @@ function App() {
     latitude: 37.8,
     zoom: 14,
   });
+  const [map, setMap] = useState<mapboxgl.Map | null>(null);
+  const [mapboxDraw, setMapboxDraw] = useState<MapboxDraw | null>(null);
+  const [mapBackgroundIndex, setMapBackgroundIndex] = useState(0);
   const [features, setFeatures] = useState<Record<string, Feature>>({});
   const [featureProperties, setFeatureProperties] = useState<
     Record<string, FeatureProperties>
   >({});
   const [selectedFeature, setSelectedFeature] = useState<Feature | null>(null);
   const [showHelp, setShowHelp] = useState(false);
+
+  const selectFileButton = (mapBoxDraw: MapboxDraw | null) => {
+    const fileInput = useRef<HTMLInputElement>(null);
+    if (mapBoxDraw==null) {
+      return <></>;
+    }
+    const selectFile = () => {
+      if (fileInput.current!=null) {
+        // @ts-ignore
+        fileInput.current.click();
+      }
+    }
+    return (
+        <>
+          <input type="file" style={{ "display": "none" }} ref={fileInput} onChange={event => {
+            var reader = new FileReader();
+            reader.onload = ev => {
+              if (ev.target!=null && ev.target.result!=null) {
+                var obj : FeatureCollection = JSON.parse(ev.target.result.toString());
+                const newFeatures : {[name: string] : Feature} = {};
+                const newFeatureProperties : {[name: string] : FeatureProperties} = {};
+                obj.features.forEach((f)=> {
+                  const feature = f as Feature;
+                  if (feature!=null && feature.id!=null && feature.properties!=null && feature.properties.name!=null) {
+                    const id = feature.id;
+                    const name = feature.properties.name;
+                    const imageOpacity = feature.properties.imageOpacity ?? null;
+                    newFeatureProperties[id] = {
+                      name,
+                      includeInGeoJSON: true,
+                      fillImageUrl: null,
+                      imageOpacity
+                    }
+                    newFeatures[id] = feature;
+                    mapBoxDraw.add(feature);
+                  }
+                });
+                setFeatures(newFeatures);
+                setFeatureProperties(newFeatureProperties);
+              }
+            };
+            if (event.target!=null && event.target.files!=null && event.target.files.length>0) {
+              reader.readAsText(event.target.files[0]);
+            }
+          }}/>
+          <button
+              className={"mapbox-gl-draw_ctrl-draw-btn"}
+              title={"Open GeoJSON"}
+              onClick={selectFile}
+          >
+            <FontAwesomeIcon icon={faFolderOpen} size={"lg"} />
+          </button>
+        </>
+    )
+  }
 
   const onUpdate = useCallback((e: { features: Feature[] }) => {
     setFeatures((currFeatures) => {
@@ -113,12 +177,15 @@ function App() {
   );
 
   const onDelete = useCallback(
-    (e: { features: Feature[] }) => {
+    (e: { features: Feature[] }, map: mapboxgl.Map) => {
       setFeatures((currFeatures) => {
         const newFeatures = { ...currFeatures };
         for (const f of e.features) {
           if (f.id != null) {
             delete newFeatures[f.id];
+            if (map.getLayer(f.id+"") != null) {
+              map.removeLayer(f.id+"");
+            }
           }
         }
         return newFeatures;
@@ -132,6 +199,7 @@ function App() {
         });
         return newFeatureProperties;
       });
+
       if (selectedFeature != null && e.features.includes(selectedFeature)) {
         setSelectedFeature(null);
       }
@@ -166,56 +234,61 @@ function App() {
   modes["simple_select"] = SimpleSelectMode;
   modes["direct_select"] = DirectSelectMode;
 
+
+  // Create bitmap layers
+  if (map!=null && Object.values(features).length==Object.values(featureProperties).length) {
+    Object.values(features)
+        .filter(
+            (feature) =>
+                feature.id != null &&
+                featureProperties[feature.id].fillImageUrl != null &&
+                feature.geometry != null
+        )
+        .map((feature) => {
+          const sourceId = `${feature.id ?? "doesn't happen"}`;
+          const properties =
+              featureProperties[feature.id ?? "doesn't happen"];
+          const coordinates = extractCoordinates(feature);
+          return coordinates != null
+              ? {sourceId, properties, coordinates}
+              : null;
+        })
+        .filter(notNull)
+        .forEach((extractedInfo) => {
+              const sourceId = extractedInfo.sourceId;
+              const properties = extractedInfo.properties;
+
+              const props = {
+                id: sourceId,
+                // @ts-ignore
+                type: BitmapLayer,
+                bounds: extractedInfo.coordinates,
+                image: properties.fillImageUrl,
+                opacity: properties.imageOpacity,
+              };
+
+              if (map.getLayer(sourceId) != null) {
+                // Need to call setProps for DeckGL bitmap geometry to update
+                // @ts-ignore
+                (((map.getLayer(sourceId))).implementation as MapboxLayer).setProps(props);
+              } else {
+                // @ts-ignore
+                map.addLayer(new MapboxLayer(props));
+              }
+            }
+        );
+  }
   return (
-    <>
+      <>
       <Map
         {...viewState}
         style={{ width: "100%", height: "100%" }}
-        mapStyle="mapbox://styles/mapbox/light-v9"
+        mapStyle={MAPBOX_STYLES[mapBackgroundIndex]}
         mapboxAccessToken={mapboxAccessToken}
-        onMove={(evt) => setViewState(evt.viewState)}
+        onMove={(evt) => {setViewState(evt.viewState)}}
+        onLoad={e => {setMap(e.target)}}
       >
-        {Object.values(features)
-          .filter(
-            (feature) =>
-              feature.id != null &&
-              featureProperties[feature.id].fillImageUrl != null &&
-              feature.geometry != null
-          )
-          .map((feature) => {
-            const sourceId = `${feature.id ?? "doesn't happen"}`;
-            const properties =
-              featureProperties[feature.id ?? "doesn't happen"];
-            const coordinates = extractCoordinates(feature);
-            return coordinates != null
-              ? { sourceId, properties, coordinates }
-              : null;
-          })
-          .filter(notNull)
-          .map((extractedInfo) => {
-            const sourceId = extractedInfo.sourceId;
-            const properties = extractedInfo.properties;
-            const coordinates = extractedInfo.coordinates;
-            return (
-              <Fragment key={sourceId}>
-                <Source
-                  type={"image"}
-                  id={sourceId}
-                  coordinates={coordinates}
-                  url={properties.fillImageUrl ?? "doesn't happen"}
-                />
-                <Layer
-                  type={"raster"}
-                  source={sourceId}
-                  id={`${sourceId}-layer`}
-                  paint={{
-                    "raster-opacity": properties.imageOpacity,
-                  }}
-                />
-              </Fragment>
-            );
-          })}
-        <DrawControl
+        {map!=null && <DrawControl
           position="top-left"
           displayControlsDefault={false}
           controls={{
@@ -223,14 +296,15 @@ function App() {
             trash: true,
           }}
           clickBuffer={10}
-          defaultMode={"draw_polygon"}
+          onLoad={setMapboxDraw}
+          defaultMode={"simple_select"}
           onCreate={onCreate}
           onUpdate={onUpdate}
-          onDelete={onDelete}
+          onDelete={evt => {onDelete(evt, map)}}
           onSelectionChange={onSelectionChange}
           onLiveUpdate={onLiveUpdate}
           modes={modes}
-        />
+        />}
         <GeocoderControl
           mapboxAccessToken={mapboxAccessToken}
           position="top-right"
@@ -266,6 +340,17 @@ function App() {
       </div>
       <div className={"map-overlay additionalActionsToolbar"}>
         <div className={"mapboxgl-ctrl-group mapboxgl-ctrl"}>
+
+          <button
+            className={"mapbox-gl-draw_ctrl-draw-btn"}
+            title={"Toggle background"}
+            onClick={()=> {
+              setMapBackgroundIndex((mapBackgroundIndex+1)%MAPBOX_STYLES.length);
+            }}
+          >
+            <FontAwesomeIcon icon={faMap} size={"lg"} />
+          </button>
+          {selectFileButton(mapboxDraw)}
           <button
             className={"mapbox-gl-draw_ctrl-draw-btn"}
             title={"Save as GeoJSON"}
@@ -287,6 +372,8 @@ function App() {
                   const updatedFeature: Feature = { ...feature };
                   updatedFeature.properties = {
                     name: properties.name,
+                    fillImageUrl: properties.fillImageUrl,
+                    imageOpacity: properties.imageOpacity
                   };
                   return updatedFeature;
                 })
@@ -306,7 +393,7 @@ function App() {
                 )
               );
               link.href = objectUrl;
-              link.download = "areas.geojson";
+              link.download = "areas";
               document.body.appendChild(link);
               link.click();
               document.body.removeChild(link);
@@ -319,7 +406,6 @@ function App() {
             className={"mapbox-gl-draw_ctrl-draw-btn"}
             title={"Help"}
             onClick={() => {
-              console.log("Pressed");
               setShowHelp((old) => !old);
             }}
           >
@@ -334,8 +420,9 @@ function App() {
           </div>
         </div>
       )}
-    </>
+      </>
   );
+
 }
 
 function notNull<TValue>(value: TValue | null | undefined): value is TValue {
