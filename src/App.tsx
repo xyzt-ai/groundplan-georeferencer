@@ -43,10 +43,10 @@ function extractCoordinates(feature: Feature): [Position, Position, Position, Po
 }
 
 const MAPBOX_STYLES = [
+  "mapbox://styles/mapbox/light-v10",
   "mapbox://styles/mapbox/satellite-streets-v11",
-    "mapbox://styles/mapbox/light-v10",
-    "mapbox://styles/mapbox/dark-v10",
-    "mapbox://styles/mapbox/streets-v11"
+  "mapbox://styles/mapbox/dark-v10",
+  "mapbox://styles/mapbox/streets-v11"
 ]
 
 function App() {
