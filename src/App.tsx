@@ -250,8 +250,7 @@ function App2() {
           mapboxAccessToken={mapboxAccessToken}
           position="top-right"
         />
-        <FullscreenControl position={"bottom-left"} style={{ zIndex: "1" }} />
-        <NavigationControl position={"bottom-left"} style={{ zIndex: "1" }} />
+        <NavigationControl position={"bottom-left"} />
       </Map>
       <div className={"map-overlay object-properties"}>
         <div className={"map-overlay-inner"}>
