@@ -2,11 +2,7 @@ import React, { useCallback, useRef, useState } from "react";
 import "./App.css";
 import "mapbox-gl/dist/mapbox-gl.css";
 import "@mapbox/mapbox-gl-draw/dist/mapbox-gl-draw.css";
-import Map, {
-  FullscreenControl,
-  NavigationControl,
-  useControl,
-} from "react-map-gl";
+import Map, { NavigationControl, useControl } from "react-map-gl";
 import GeocoderControl from "./geocoder-control";
 import { FontAwesomeIcon } from "@fortawesome/react-fontawesome";
 import {
@@ -18,7 +14,6 @@ import {
 import HelpComponent from "./HelpComponent";
 import { Feature, FeatureCollection, Polygon } from "geojson";
 import { FeatureProperties } from "./feature-properties";
-import mapboxgl from "mapbox-gl";
 import throttle from "lodash.throttle";
 import MapboxDraw from "@mapbox/mapbox-gl-draw";
 import SimpleSelectMode from "./CustomSimpleSelectMode";
@@ -68,7 +63,7 @@ interface FeatureWithProperties {
 
 //See https://github.com/visgl/react-map-gl/blob/master/examples/deckgl-overlay/src/app.tsx
 function DeckGLOverlay(props: DeckProps) {
-  const deck = useControl<MapboxOverlay>(() => new MapboxOverlay(props));
+  const deck = useControl<MapboxOverlay>(() => new MapboxOverlay({ ...props }));
   deck.setProps(props);
   return null;
 }
