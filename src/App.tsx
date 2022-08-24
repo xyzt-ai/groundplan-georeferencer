@@ -290,7 +290,9 @@ function App2() {
             className={"mapbox-gl-draw_ctrl-draw-btn"}
             title={"Open GeoJSON"}
             disabled={mapboxDraw == null || fileInput.current == null}
-            onClick={() => fileInput.current != null && fileInput.current.click}
+            onClick={() => {
+              fileInput.current != null && fileInput.current.click();
+            }}
           >
             <FontAwesomeIcon icon={faFolderOpen} size={"lg"} />
           </button>
