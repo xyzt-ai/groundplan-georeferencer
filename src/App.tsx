@@ -1,19 +1,13 @@
 import React, { useCallback, useRef, useState } from "react";
 import "./App.css";
-import { MapboxLayer } from "@deck.gl/mapbox";
-import { BitmapLayer } from "@deck.gl/layers";
-import Map, { FullscreenControl, NavigationControl } from "react-map-gl";
 import "mapbox-gl/dist/mapbox-gl.css";
-import GeocoderControl from "./geocoder-control";
 import "@mapbox/mapbox-gl-draw/dist/mapbox-gl-draw.css";
-import DrawControl from "./draw-control";
-import { Feature, FeatureCollection, Polygon } from "geojson";
-import Objectproperties from "./objectproperties";
-import { FeatureProperties } from "./feature-properties";
-import MapboxDraw from "@mapbox/mapbox-gl-draw";
-import DirectSelectMode from "./CustomDirectSelectMode";
-import SimpleSelectMode from "./CustomSimpleSelectMode";
-import throttle from "lodash.throttle";
+import Map, {
+  FullscreenControl,
+  NavigationControl,
+  useControl,
+} from "react-map-gl";
+import GeocoderControl from "./geocoder-control";
 import { FontAwesomeIcon } from "@fortawesome/react-fontawesome";
 import {
   faFloppyDisk,
@@ -22,11 +16,29 @@ import {
   faQuestionCircle,
 } from "@fortawesome/free-solid-svg-icons";
 import HelpComponent from "./HelpComponent";
-import { Position } from "@deck.gl/core/utils/positions";
+import { Feature, FeatureCollection, Polygon } from "geojson";
+import { FeatureProperties } from "./feature-properties";
 import mapboxgl from "mapbox-gl";
+import throttle from "lodash.throttle";
+import MapboxDraw from "@mapbox/mapbox-gl-draw";
+import SimpleSelectMode from "./CustomSimpleSelectMode";
+import DirectSelectMode from "./CustomDirectSelectMode";
+import DrawControl from "./draw-control";
+import { Position } from "@deck.gl/core/utils/positions";
+import Objectproperties from "./objectproperties";
+import { MapboxOverlay } from "@deck.gl/mapbox/typed";
+import { DeckProps, LayersList } from "@deck.gl/core/typed";
+import { BitmapLayer } from "@deck.gl/layers";
 
 const mapboxAccessToken =
   "pk.eyJ1IjoiZ2Vvcmdpb3MtdWJlciIsImEiOiJjanZidTZzczAwajMxNGVwOGZrd2E5NG90In0.gdsRu_UeU_uPi9IulBruXA";
+
+const MAPBOX_STYLES = [
+  "mapbox://styles/mapbox/light-v10",
+  "mapbox://styles/mapbox/satellite-streets-v11",
+  "mapbox://styles/mapbox/dark-v10",
+  "mapbox://styles/mapbox/streets-v11",
+];
 
 function extractCoordinates(
   feature: Feature
@@ -49,113 +61,103 @@ function extractCoordinates(
   ];
 }
 
-const MAPBOX_STYLES = [
-  "mapbox://styles/mapbox/light-v10",
-  "mapbox://styles/mapbox/satellite-streets-v11",
-  "mapbox://styles/mapbox/dark-v10",
-  "mapbox://styles/mapbox/streets-v11",
-];
+interface FeatureWithProperties {
+  feature: Feature;
+  properties: FeatureProperties;
+}
 
-function App() {
+//See https://github.com/visgl/react-map-gl/blob/master/examples/deckgl-overlay/src/app.tsx
+function DeckGLOverlay(props: DeckProps) {
+  const deck = useControl<MapboxOverlay>(() => new MapboxOverlay(props));
+  deck.setProps(props);
+  return null;
+}
+
+function App2() {
   const [viewState, setViewState] = useState({
     longitude: -122.4,
     latitude: 37.8,
     zoom: 14,
   });
-  const [map, setMap] = useState<mapboxgl.Map | null>(null);
-  const [mapboxDraw, setMapboxDraw] = useState<MapboxDraw | null>(null);
-  const [mapBackgroundIndex, setMapBackgroundIndex] = useState(0);
-  const [features, setFeatures] = useState<Record<string, Feature>>({});
-  const [featureProperties, setFeatureProperties] = useState<
-    Record<string, FeatureProperties>
+  const mapboxDraw = useRef<MapboxDraw | null>(null);
+  const [mapBoxStyleIndex, setMapBoxStyleIndex] = useState(0);
+  const [featuresWithProperties, setFeaturesWithProperties] = useState<
+    Record<string, FeatureWithProperties>
   >({});
+
   const [selectedFeature, setSelectedFeature] = useState<Feature | null>(null);
   const [showHelp, setShowHelp] = useState(false);
   const fileInput = useRef<HTMLInputElement>(null);
 
   const onUpdate = useCallback((e: { features: Feature[] }) => {
-    setFeatures((currFeatures) => {
-      const newFeatures = { ...currFeatures };
+    setFeaturesWithProperties((currFeaturesWithProperties) => {
+      const newFeaturesWithProperties = { ...currFeaturesWithProperties };
       for (const f of e.features) {
         if (f.id != null) {
-          newFeatures[f.id] = f;
-        }
-      }
-      return newFeatures;
-    });
-    //We only support those background images when the polygon has exactly 4 coordinates
-    setFeatureProperties((currProperties) => {
-      const updatedProperties = { ...currProperties };
-      let changed = false;
-      e.features.forEach((feature) => {
-        if (feature.id != null) {
-          const properties = updatedProperties[feature.id];
+          const properties = currFeaturesWithProperties[f.id].properties;
+
           if (
             properties.fillImageUrl != null &&
-            extractCoordinates(feature) == null
+            extractCoordinates(f) == null
           ) {
-            URL.revokeObjectURL(properties.fillImageUrl);
-            updatedProperties[feature.id] = {
-              ...properties,
-              fillImageUrl: null,
+            newFeaturesWithProperties[f.id] = {
+              feature: f,
+              properties: {
+                ...properties,
+                fillImageUrl: null,
+              },
             };
-            changed = true;
+            URL.revokeObjectURL(properties.fillImageUrl);
+          } else {
+            newFeaturesWithProperties[f.id] = {
+              ...newFeaturesWithProperties[f.id],
+              feature: f,
+            };
           }
         }
-      });
-      return changed ? updatedProperties : currProperties;
+      }
+      return newFeaturesWithProperties;
     });
   }, []);
 
-  const onCreate = useCallback(
-    (e: { features: Feature[] }) => {
-      setFeatureProperties((currentFeatureProperties) => {
-        const newFeatureProperties = { ...currentFeatureProperties };
-        let counter = Object.values(newFeatureProperties).length + 1;
-        e.features.forEach((feature) => {
-          if (feature.id != null) {
-            newFeatureProperties[feature.id] = {
+  const onCreate = useCallback((e: { features: Feature[] }) => {
+    setFeaturesWithProperties((currFeaturesWithProperties) => {
+      const updatedFeaturesWithProperties = { ...currFeaturesWithProperties };
+      let counter = Object.values(updatedFeaturesWithProperties).length + 1;
+      e.features.forEach((feature) => {
+        if (feature.id != null) {
+          updatedFeaturesWithProperties[feature.id] = {
+            feature: feature,
+            properties: {
               name: `Area ${counter++}`,
               includeInGeoJSON: true,
               fillImageUrl: null,
               imageOpacity: 0.5,
-            };
-          }
-        });
-        return newFeatureProperties;
+            },
+          };
+        }
       });
-      onUpdate(e);
-    },
-    [onUpdate]
-  );
+      return updatedFeaturesWithProperties;
+    });
+  }, []);
 
   const onDelete = useCallback(
-    (e: { features: Feature[] }, map: mapboxgl.Map) => {
-      e.features.forEach((feature) => {
-        if (feature.id != null) {
-          const layerId = `${feature.id}`;
-          if (map.getLayer(layerId) != null) {
-            map.removeLayer(layerId);
-          }
-        }
-      });
-      setFeatures((currFeatures) => {
-        const newFeatures = { ...currFeatures };
+    (e: { features: Feature[] }) => {
+      setFeaturesWithProperties((currFeaturesWithProperties) => {
+        const newFeaturesWithProperties = { ...currFeaturesWithProperties };
         for (const f of e.features) {
           if (f.id != null) {
-            delete newFeatures[f.id];
+            const currentValue = newFeaturesWithProperties[f.id];
+            if (
+              currentValue != null &&
+              currentValue.properties.fillImageUrl != null
+            ) {
+              URL.revokeObjectURL(currentValue.properties.fillImageUrl);
+            }
+            delete newFeaturesWithProperties[f.id];
           }
         }
-        return newFeatures;
-      });
-      setFeatureProperties((currentFeatureProperties) => {
-        const newFeatureProperties = { ...currentFeatureProperties };
-        e.features.forEach((feature) => {
-          if (feature.id != null) {
-            delete newFeatureProperties[feature.id];
-          }
-        });
-        return newFeatureProperties;
+        return newFeaturesWithProperties;
       });
 
       if (selectedFeature != null && e.features.includes(selectedFeature)) {
@@ -180,7 +182,7 @@ function App() {
     [onUpdate]
   );
   const onLiveUpdate = useCallback(
-    throttle(nonThrottledOnLiveUpdateHandler, 200),
+    throttle(nonThrottledOnLiveUpdateHandler, 50),
     [nonThrottledOnLiveUpdateHandler]
   );
 
@@ -192,94 +194,64 @@ function App() {
   modes["simple_select"] = SimpleSelectMode;
   modes["direct_select"] = DirectSelectMode;
 
-  // Create bitmap layers
-  if (
-    map != null &&
-    Object.values(features).length == Object.values(featureProperties).length
-  ) {
-    Object.values(features)
-      .filter(
-        (feature) =>
-          feature.id != null &&
-          featureProperties[feature.id].fillImageUrl != null &&
-          feature.geometry != null
-      )
-      .map((feature) => {
-        const sourceId = `${feature.id ?? "doesn't happen"}`;
-        const properties = featureProperties[feature.id ?? "doesn't happen"];
-        const coordinates = extractCoordinates(feature);
-        return coordinates != null
-          ? { sourceId, properties, coordinates }
-          : null;
-      })
-      .filter(notNull)
-      .forEach((extractedInfo) => {
-        const sourceId = extractedInfo.sourceId;
-        const properties = extractedInfo.properties;
+  // @ts-ignore
+  const layers: LayersList = Object.values(featuresWithProperties)
+    .map((feature) => {
+      const fillImageUrl = feature.properties.fillImageUrl;
+      const imageOpacity = feature.properties.imageOpacity;
+      if (fillImageUrl == null) {
+        return null;
+      }
+      const coordinates = extractCoordinates(feature.feature);
+      if (coordinates == null) {
+        return null;
+      }
 
-        const props = {
-          id: sourceId,
-          // @ts-ignore
-          type: BitmapLayer,
-          bounds: extractedInfo.coordinates,
-          image: properties.fillImageUrl,
-          opacity: properties.imageOpacity,
-        };
-
-        if (map.getLayer(sourceId) != null) {
-          // Need to call setProps for DeckGL bitmap geometry to update
-          // @ts-ignore
-          (map.getLayer(sourceId).implementation as MapboxLayer).setProps(
-            props
-          );
-        } else {
-          // @ts-ignore
-          map.addLayer(new MapboxLayer(props));
-        }
+      return new BitmapLayer({
+        id: `${feature.feature.id}-bitmaplayer`,
+        bounds: coordinates,
+        opacity: imageOpacity,
+        image: fillImageUrl,
       });
-  }
+    })
+    .filter(notNull);
   return (
     <>
       <Map
         {...viewState}
         style={{ width: "100%", height: "100%" }}
-        mapStyle={MAPBOX_STYLES[mapBackgroundIndex]}
+        mapStyle={MAPBOX_STYLES[mapBoxStyleIndex]}
         mapboxAccessToken={mapboxAccessToken}
         onMove={(evt) => {
           setViewState(evt.viewState);
         }}
-        onLoad={(e) => {
-          setMap(e.target);
-        }}
       >
-        {map != null && (
-          <DrawControl
-            position="top-left"
-            displayControlsDefault={false}
-            controls={{
-              polygon: true,
-              trash: true,
-            }}
-            clickBuffer={10}
-            onLoad={setMapboxDraw}
-            defaultMode={"simple_select"}
-            onCreate={onCreate}
-            onUpdate={onUpdate}
-            onDelete={(evt) => {
-              onDelete(evt, map);
-            }}
-            onSelectionChange={onSelectionChange}
-            onLiveUpdate={onLiveUpdate}
-            modes={modes}
-          />
-        )}
+        <DeckGLOverlay layers={layers} />
+        <DrawControl
+          position="top-left"
+          displayControlsDefault={false}
+          controls={{
+            polygon: true,
+            trash: true,
+          }}
+          clickBuffer={10}
+          onLoad={(draw) => {
+            mapboxDraw.current = draw;
+          }}
+          defaultMode={"simple_select"}
+          onCreate={onCreate}
+          onUpdate={onUpdate}
+          onDelete={onDelete}
+          onSelectionChange={onSelectionChange}
+          onLiveUpdate={onLiveUpdate}
+          modes={modes}
+        />
         <GeocoderControl
           mapboxAccessToken={mapboxAccessToken}
           position="top-right"
         />
-
-        <FullscreenControl position={"bottom-left"} />
-        <NavigationControl position={"bottom-left"} />
+        <FullscreenControl position={"bottom-left"} style={{ zIndex: "1" }} />
+        <NavigationControl position={"bottom-left"} style={{ zIndex: "1" }} />
       </Map>
       <div className={"map-overlay object-properties"}>
         <div className={"map-overlay-inner"}>
@@ -287,14 +259,17 @@ function App() {
             feature={selectedFeature}
             featureProperties={
               selectedFeature != null && selectedFeature.id != null
-                ? featureProperties[selectedFeature.id]
+                ? featuresWithProperties[selectedFeature.id]?.properties ?? null
                 : null
             }
             onFeaturePropertiesChange={(featureProperties, feature) => {
-              setFeatureProperties((previous) => {
+              setFeaturesWithProperties((previous) => {
                 const updatedProperties = { ...previous };
                 if (feature.id != null) {
-                  updatedProperties[feature.id] = featureProperties;
+                  updatedProperties[feature.id] = {
+                    ...updatedProperties[feature.id],
+                    properties: featureProperties,
+                  };
                 }
                 return updatedProperties;
               });
@@ -312,9 +287,7 @@ function App() {
             className={"mapbox-gl-draw_ctrl-draw-btn"}
             title={"Toggle background"}
             onClick={() => {
-              setMapBackgroundIndex(
-                (mapBackgroundIndex + 1) % MAPBOX_STYLES.length
-              );
+              setMapBoxStyleIndex((old) => (old + 1) % MAPBOX_STYLES.length);
             }}
           >
             <FontAwesomeIcon icon={faMap} size={"lg"} />
@@ -331,17 +304,18 @@ function App() {
             className={"mapbox-gl-draw_ctrl-draw-btn"}
             title={"Save as GeoJSON"}
             disabled={
-              Object.values(featureProperties).filter(
-                (property) => property.includeInGeoJSON
+              Object.values(featuresWithProperties).filter(
+                (feature) => feature.properties.includeInGeoJSON
               ).length < 1
             }
             onClick={() => {
-              const featuresToSave = Object.values(features)
-                .map((feature) => {
+              const featuresToSave = Object.values(featuresWithProperties)
+                .map((featureWithProperties) => {
+                  const feature = featureWithProperties.feature;
+                  const properties = featureWithProperties.properties;
                   if (feature.id == null) {
                     return null;
                   }
-                  const properties = featureProperties[feature.id];
                   if (!properties.includeInGeoJSON) {
                     return null;
                   }
@@ -402,42 +376,69 @@ function App() {
         style={{ display: "none" }}
         ref={fileInput}
         onChange={(event) => {
-          const draw = mapboxDraw;
+          const draw = mapboxDraw.current;
           if (draw != null) {
             const reader = new FileReader();
             reader.onload = (ev) => {
               if (ev.target != null && ev.target.result != null) {
-                const obj: FeatureCollection = JSON.parse(
+                const decodedFeatureCollection: FeatureCollection = JSON.parse(
                   ev.target.result.toString()
                 );
-                const newFeatures: { [name: string]: Feature } = {};
-                const newFeatureProperties: {
-                  [name: string]: FeatureProperties;
-                } = {};
-                obj.features.forEach((f) => {
-                  const feature = f as Feature;
-                  if (
-                    feature != null &&
-                    feature.id != null &&
-                    feature.properties != null &&
-                    feature.properties.name != null
-                  ) {
-                    const id = feature.id;
-                    const name = feature.properties.name;
-                    const imageOpacity =
-                      feature.properties.imageOpacity ?? null;
-                    newFeatureProperties[id] = {
-                      name,
-                      includeInGeoJSON: true,
-                      fillImageUrl: null,
-                      imageOpacity,
-                    };
-                    newFeatures[id] = feature;
-                    draw.add(feature);
-                  }
+
+                //The user can load some random file, so do a sanity check
+                if (decodedFeatureCollection.type !== "FeatureCollection") {
+                  return;
+                }
+                let counter = Object.values(featuresWithProperties).length;
+
+                const featuresToAdd: FeatureWithProperties[] =
+                  decodedFeatureCollection.features
+                    .map((feature) => {
+                      const id = feature.id;
+                      if (id == null) {
+                        return null;
+                      }
+                      if (feature.geometry == null) {
+                        return null;
+                      }
+                      if (feature.geometry.type != "Polygon") {
+                        return null;
+                      }
+                      const featureProperties: FeatureProperties = {
+                        name:
+                          feature?.properties?.["name"] ?? `Area ${counter++}`,
+                        includeInGeoJSON: true,
+                        fillImageUrl: null,
+                        imageOpacity: 0.5,
+                      };
+
+                      const featureWithoutProperties: Feature = {
+                        type: "Feature",
+                        geometry: feature.geometry,
+                        id: feature.id,
+                        properties: {},
+                      };
+                      return {
+                        feature: featureWithoutProperties,
+                        properties: featureProperties,
+                      };
+                    })
+                    .filter(notNull);
+
+                setFeaturesWithProperties((current) => {
+                  const updatedFeaturesWithProperties = { ...current };
+                  featuresToAdd.forEach((featureWithProperties) => {
+                    const id = featureWithProperties.feature.id;
+                    if (id != null) {
+                      updatedFeaturesWithProperties[id] = featureWithProperties;
+                    }
+                  });
+                  return updatedFeaturesWithProperties;
                 });
-                setFeatures(newFeatures);
-                setFeatureProperties(newFeatureProperties);
+
+                featuresToAdd.forEach((featureWithProperties) => {
+                  draw.add(featureWithProperties.feature);
+                });
               }
             };
             if (
@@ -458,4 +459,4 @@ function notNull<TValue>(value: TValue | null | undefined): value is TValue {
   return value != null;
 }
 
-export default App;
+export default App2;

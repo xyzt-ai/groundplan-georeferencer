@@ -6,7 +6,6 @@ import { Feature } from "geojson";
 
 type DrawControlProps = ConstructorParameters<typeof MapboxDraw>[0] & {
   position?: ControlPosition;
-
   onCreate?: (evt: { features: Feature[] }) => void;
   onUpdate?: (evt: { features: Feature[]; action: string }) => void;
   onDelete?: (evt: { features: Feature[] }) => void;
